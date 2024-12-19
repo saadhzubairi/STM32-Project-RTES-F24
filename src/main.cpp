@@ -2,7 +2,10 @@
 #include "FlashIAP.h"
 #include <array>
 #include <vector>
+#include <cmath>
+#include <cfloat>
 #include <algorithm>
+#include <numeric>
 
 #define CTRL_REG1 0x20                   // Control register 1 address
 #define CTRL_REG1_CONFIG 0b01'10'1'1'1'1 // Configuration: ODR=100Hz, Enable X/Y/Z axes, power on
@@ -217,11 +220,11 @@ std::vector<GyroData> readGyroDataFromFlash()
 
     flash.deinit();
 
-    printf("Data retrieved from flash:\n");
+    /* printf("Data retrieved from flash:\n");
     for (const auto &gyro : data)
     {
         printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
-    }
+    } */
 
     return data;
 }
@@ -244,26 +247,117 @@ void on_button_press()
     doubleClickTimer.start(); // Start the timer to detect double clicks
 }
 
+float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float> &seq2)
+{
+    size_t n = seq1.size();
+    size_t m = seq2.size();
+
+    if (n > gyroTemp.size() || m > gyroTemp.size())
+    {
+        printf("Error: Sequence size exceeds maximum DTW buffer size.\n");
+        return FLT_MAX; // Return a large value to indicate failure
+    }
+
+    std::vector<float> prev(m + 1, FLT_MAX);
+    std::vector<float> curr(m + 1, FLT_MAX);
+    prev[0] = 0;
+
+    for (size_t i = 1; i <= n; ++i)
+    {
+        curr[0] = FLT_MAX;
+        for (size_t j = 1; j <= m; ++j)
+        {
+            float dist = fabs(seq1[i - 1] - seq2[j - 1]);
+            curr[j] = dist + std::min({prev[j], curr[j - 1], prev[j - 1]});
+        }
+        std::swap(prev, curr);
+    }
+
+    return prev[m] / std::max(n, m);
+}
+
+bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::vector<GyroData> &flashData, float dtw_threshold = 0.5f)
+{
+    // Ensure the flash data has at least as many elements as gyroTemp
+    if (flashData.size() < gyroTemp.size())
+    {
+        printf("Error: Flash data has fewer elements than the gyroscope data.\n");
+        return false;
+    }
+    else
+    {
+        printf("Comparing using DTW\n");
+    }
+
+    // Extract only the first gyroTemp.size() elements from flashData for comparison
+    std::vector<GyroData> flashSubset(flashData.begin(), flashData.begin() + gyroTemp.size());
+
+    printf("Extracting data\n");
+
+    // Extract axis-specific data
+    std::vector<float> tempX, tempY, tempZ;
+    std::vector<float> flashX, flashY, flashZ;
+
+    printf("PUTTING IN\n");
+
+    for (size_t i = 0; i < gyroTemp.size() - 1; ++i)
+    {
+        tempX.push_back(gyroTemp[i][0]);
+        tempY.push_back(gyroTemp[i][1]);
+        tempZ.push_back(gyroTemp[i][2]);
+
+        flashX.push_back(flashSubset[i][0]);
+        flashY.push_back(flashSubset[i][1]);
+        flashZ.push_back(flashSubset[i][2]);
+
+        printf("DONE WITH I:%d\n", i);
+    }
+
+    // Compute DTW distance for each axis
+    float dtwX = dynamicTimeWarping(tempX, flashX);
+    float dtwY = dynamicTimeWarping(tempY, flashY);
+    float dtwZ = dynamicTimeWarping(tempZ, flashZ);
+
+    printf("DONE WITH dtw distance\n");
+
+    printf("DTW distances -> X: %.5f, Y: %.5f, Z: %.5f\n", dtwX, dtwY, dtwZ);
+
+    // Combine distances and check threshold
+    float combined_dtw = (dtwX + dtwY + dtwZ) / 3.0f;
+    if (combined_dtw <= dtw_threshold)
+    {
+        printf("Gyro data matches flash data based on DTW.\n");
+        return true;
+    }
+    else
+    {
+        printf("Mismatch: Combined DTW distance = %.5f exceeds threshold = %.5f\n", combined_dtw, dtw_threshold);
+        return false;
+    }
+}
+
 void processAndValidateInput()
 {
+    printf("validating");
     led1 = 1;
     led2 = 1;
-
-    /* LOGIC OF COMPARING (CALLING SOME OTHER FUNCTIONS ETC) */
-    
-    bool valid;
+    // Retrieve data from flash memory
+    std::vector<GyroData> flashData = readGyroDataFromFlash();
+    // Compare gyroTemp with the first gyroTemp.size() elements of flashData using DTW
+    bool valid = compareGyroDataUsingDTW(gyroTemp, flashData);
     if (valid)
     {
         led2 = 0; // Turn off LED2
         led1 = 1; // Turn on LED2 for 0.5 seconds
-        ThisThread::sleep_for(1000ms);
+        printf("correct!");
     }
     else
     {
         led1 = 0; // Turn off LED2
         led2 = 1; // Turn on LED2 for 0.5 seconds
-        ThisThread::sleep_for(1000ms);
+        printf("incorrect!");
     }
+    ThisThread::sleep_for(1000ms);
 }
 
 void process_clicks()
@@ -339,8 +433,8 @@ void process_clicks()
             }
             // Turn on LED1 to indicate completion
             led1 = 1;
-            std::vector<GyroData> retrieved_data = readGyroDataFromFlash();
-            printf("Retrieved data matches recorded data.\n");
+            /* std::vector<GyroData> retrieved_data = readGyroDataFromFlash();
+            printf("Retrieved data matches recorded data.\n"); */
             ThisThread::sleep_for(500ms);
             led1 = 0;
             recordingTimer.stop();
