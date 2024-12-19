@@ -23,6 +23,13 @@ using GyroData = std::array<float, 3>;
 SPI spi(PF_9, PF_8, PF_7, PC_1, use_gpio_ssel);
 uint8_t write_buf[32], read_buf[32];
 
+std::vector<GyroData> gyroTemp;
+
+/*
+to purge this use:
+memset(&gyro, 0, sizeof(gyro));
+ */
+
 void spi_cb(int event)
 {
     flags.set(SPI_FLAG); // Set the SPI_FLAG to signal that transfer is complete
@@ -149,13 +156,11 @@ std::vector<GyroData> trim_gyro_data(const std::vector<GyroData> &data, float th
 }
 
 // Function to store gyro data to flash memory
-void storeGyroDataToFlash(const std::vector<GyroData> &data)
+/* void storeGyroDataToFlash(const std::vector<GyroData> &data)
 {
     size_t data_size = data.size() * sizeof(GyroData);
 
-    printf("\t/******************************************/\n");
-    printf("\t/************data to be stored*************/\n");
-    printf("\t/******************************************/\n");
+
 
     for (const auto &gyro : data)
     {
@@ -173,7 +178,7 @@ void storeGyroDataToFlash(const std::vector<GyroData> &data)
     flash.erase(FLASH_ADDRESS, FLASH_SIZE);               // Erase flash sector
     flash.program(data.data(), FLASH_ADDRESS, data_size); // Write data to flash
     flash.deinit();
-}
+} */
 
 /* std::vector<GyroData> readGyroDataFromFlash()
 {
@@ -239,23 +244,56 @@ void on_button_press()
     doubleClickTimer.start(); // Start the timer to detect double clicks
 }
 
+void processAndValidateInput()
+{
+    led1 = 1;
+    led2 = 1;
+
+    /* LOGIC OF COMPARING (CALLING SOME OTHER FUNCTIONS ETC) */
+    
+    bool valid;
+    if (valid)
+    {
+        led2 = 0; // Turn off LED2
+        led1 = 1; // Turn on LED2 for 0.5 seconds
+        ThisThread::sleep_for(1000ms);
+    }
+    else
+    {
+        led1 = 0; // Turn off LED2
+        led2 = 1; // Turn on LED2 for 0.5 seconds
+        ThisThread::sleep_for(1000ms);
+    }
+}
+
 void process_clicks()
 {
+    led1 = 0;
+    led2 = 0;
     if (clickCount > 0 && doubleClickTimer.elapsed_time() > 500ms) // Wait 500ms for potential second click
     {
         if (clickCount == 1)
         {
             // Single click detected
             printf("Single click detected\n");
-            for (int i = 0; i < 50; i++)
+
+            Timer recordingTimer;
+            recordingTimer.start();
+
+            std::vector<GyroData> gyro_data_buffer;
+
+            while (recordingTimer.elapsed_time() < 5s)
             {
+
+                GyroData gyro = readGyroscopeData(spi, write_buf, read_buf);
+                gyroTemp.push_back(gyro);
+
                 led1 = !led1;
-                ThisThread::sleep_for(100ms);
+                ThisThread::sleep_for(50ms);
             }
-            led1 = 0; // Turn off LED1
-            led2 = 1; // Turn on LED2 for 0.5 seconds
-            ThisThread::sleep_for(500ms);
-            led2 = 0; // Turn off LED2
+
+            processAndValidateInput();
+            recordingTimer.stop();
         }
         else if (clickCount == 2)
         {
@@ -276,7 +314,7 @@ void process_clicks()
 
                 // Optional: Blink LED2 while recording
                 led2 = !led2;
-                ThisThread::sleep_for(100ms);
+                ThisThread::sleep_for(50ms);
             }
 
             led2 = 0; // Turn off LED2
@@ -299,13 +337,13 @@ void process_clicks()
             {
                 printf("Failed to store gyro data in flash.\n");
             }
-
             // Turn on LED1 to indicate completion
             led1 = 1;
             std::vector<GyroData> retrieved_data = readGyroDataFromFlash();
             printf("Retrieved data matches recorded data.\n");
             ThisThread::sleep_for(500ms);
             led1 = 0;
+            recordingTimer.stop();
         }
         // Reset state after processing
         clickCount = 0;
