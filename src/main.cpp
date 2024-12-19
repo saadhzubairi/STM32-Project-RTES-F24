@@ -6,6 +6,9 @@
 #include <cfloat>
 #include <algorithm>
 #include <numeric>
+#include "drivers/LCD_DISCO_F429ZI.h"
+#include "drivers/TS_DISCO_F429ZI.h"
+#include "display.h"
 
 #define CTRL_REG1 0x20                   // Control register 1 address
 #define CTRL_REG1_CONFIG 0b01'10'1'1'1'1 // Configuration: ODR=100Hz, Enable X/Y/Z axes, power on
@@ -17,7 +20,10 @@
 // Flash memory settings
 #define FLASH_ADDRESS 0x08020000 // Base address of Sector 5
 #define FLASH_SIZE 131072        // Sector size in bytes (128KB)
+
 FlashIAP flash;
+LCD_DISCO_F429ZI lcd; // LCD object
+TS_DISCO_F429ZI ts;   // Touch screen object
 
 EventFlags flags;
 
@@ -238,6 +244,7 @@ Timer doubleClickTimer;
 
 volatile int clickCount = 0;        // Click counter
 volatile bool processClick = false; // Flag to indicate processing of clicks
+bool changeScreenColor = false;
 
 void on_button_press()
 {
@@ -245,6 +252,9 @@ void on_button_press()
     clickCount++;          // Increment click counter
     doubleClickTimer.reset();
     doubleClickTimer.start(); // Start the timer to detect double clicks
+
+    // change the lcd color if button is pressed
+    changeScreenColor = true;
 }
 
 float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float> &seq2)
@@ -339,6 +349,7 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
 void processAndValidateInput()
 {
     printf("validating");
+    UpdateInfo(lcd, "matching");
     led1 = 1;
     led2 = 1;
     // Retrieve data from flash memory
@@ -350,12 +361,14 @@ void processAndValidateInput()
         led2 = 0; // Turn off LED2
         led1 = 1; // Turn on LED2 for 0.5 seconds
         printf("correct!");
+        UpdateInfo(lcd, "correct, device unlocked!");
     }
     else
     {
         led1 = 0; // Turn off LED2
         led2 = 1; // Turn on LED2 for 0.5 seconds
         printf("incorrect!");
+        UpdateInfo(lcd, "incorrect, device unlocked failed! Press button twice to record gesture. Or press once to match");
     }
     ThisThread::sleep_for(1000ms);
 }
@@ -370,6 +383,7 @@ void process_clicks()
         {
             // Single click detected
             printf("Single click detected\n");
+            UpdateInfo(lcd, "recording");
 
             Timer recordingTimer;
             recordingTimer.start();
@@ -389,10 +403,11 @@ void process_clicks()
             processAndValidateInput();
             recordingTimer.stop();
         }
-        else if (clickCount == 2)
+        else if (clickCount == 2) // Record and store data to flash
         {
             // Double click detected
             printf("Double click detected\n");
+            UpdateInfo(lcd, "recording");
 
             std::vector<GyroData> gyro_data_buffer;
 
@@ -412,7 +427,7 @@ void process_clicks()
             }
 
             led2 = 0; // Turn off LED2
-
+            UpdateInfo(lcd, "recorded, storing");
             // Print all collected gyroscope data
             printf("Recorded gyro data:\n");
             for (const auto &gyro : gyro_data_buffer)
@@ -426,6 +441,7 @@ void process_clicks()
             if (success)
             {
                 printf("Gyro data stored successfully in flash.\n");
+                UpdateInfo(lcd, "stored successfully, press button once to match");
             }
             else
             {
@@ -464,12 +480,31 @@ int main()
     // Initialize the gyroscope
     initializeGyroscope(spi, write_buf, read_buf);
 
+    UpdateInfo(lcd, "press the button twice to record");
     while (true)
     {
+
         // Process clicks when necessary
         if (clickCount > 0)
         {
             process_clicks();
+            if (debounceTimer.elapsed_time() < 100ms)
+            {
+                changeScreenColor = true;
+            }
+            else
+            {
+                changeScreenColor = false;
+            }
+        }
+
+        if (changeScreenColor)
+        {
+            ClearScreen(lcd, LCD_COLOR_BLUE);
+        }
+        else
+        {
+            ClearScreen(lcd, LCD_COLOR_WHITE);
         }
     }
 }
