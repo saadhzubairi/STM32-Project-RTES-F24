@@ -10,40 +10,60 @@
 #include "drivers/TS_DISCO_F429ZI.h"
 #include "display.h"
 
-#define CTRL_REG1 0x20                   // Control register 1 address
-#define CTRL_REG1_CONFIG 0b01'10'1'1'1'1 // Configuration: ODR=100Hz, Enable X/Y/Z axes, power on
-#define CTRL_REG4 0x23                   // Control register 4 address
-#define CTRL_REG4_CONFIG 0b0'0'01'0'00'0 // Configuration: High-resolution, 2000dps sensitivity
-#define SPI_FLAG 1
-#define OUT_X_L 0x28
+/* Necessary Parameters */
+#define CTRL_REG1 0x20                      // Control register 1 address
+#define CTRL_REG1_CONFIG 0b01'10'1'1'1'1    // Configuration: ODR=100Hz, Enable X/Y/Z axes, power on
+#define CTRL_REG4 0x23                      // Control register 4 address
+#define CTRL_REG4_CONFIG 0b0'0'01'0'00'0    // Configuration: High-resolution, 2000dps sensitivity
+#define SPI_FLAG 1                          // SPI event flag to signal transfer completion
+#define OUT_X_L 0x28                        // Register address for the gyroscope output data (X-axis low byte)
+
+// Conversion factor from raw gyroscope data to radians per second
 #define DEG_TO_RAD (17.5f * 0.0174532925199432957692236907684886f / 1000.0f)
-// Flash memory settings
-#define FLASH_ADDRESS 0x08020000 // Base address of Sector 5
-#define FLASH_SIZE 131072        // Sector size in bytes (128KB)
 
-FlashIAP flash;
-LCD_DISCO_F429ZI lcd; // LCD object
-TS_DISCO_F429ZI ts;   // Touch screen object
-
-EventFlags flags;
-
+// Alias for storing gyroscope data as a 3D vector (X, Y, Z)
 using GyroData = std::array<float, 3>;
 
-SPI spi(PF_9, PF_8, PF_7, PC_1, use_gpio_ssel);
-uint8_t write_buf[32], read_buf[32];
+/* Flash memory settings */
+#define FLASH_ADDRESS 0x08020000    // Base address of Sector 5
+#define FLASH_SIZE 131072           // Sector size in bytes (128KB)
+FlashIAP flash;                     // Flash memory interface object
 
-std::vector<GyroData> gyroTemp;
+/* Event and SPI Buffers */
+EventFlags flags; // Event flags for synchronization
+SPI spi(PF_9, PF_8, PF_7, PC_1, use_gpio_ssel); // SPI interface object for gyroscope communication
+uint8_t write_buf[32], read_buf[32]; // Buffers for SPI communication
 
-/*
-to purge this use:
-memset(&gyro, 0, sizeof(gyro));
- */
 
+/* Gyroscope Data Storage */
+std::vector<GyroData> gyroTemp; // Temporary storage for gyroscope data
+
+/* Input and Output Controls */
+InterruptIn button(BUTTON1);    // On-board button for user interaction
+DigitalOut led1(LED1);          // On-board LED1
+DigitalOut led2(LED2);          // On-board LED2
+LCD_DISCO_F429ZI lcd;           // LCD display object for visual feedback
+TS_DISCO_F429ZI ts;             // Touch screen object
+
+/* Timers for Button Actions */
+Timer debounceTimer;            // Timer for debouncing button presses
+Timer doubleClickTimer;         // Timer to detect double-click events
+
+/* Input Handling State Variables */
+volatile int clickCount = 0;        // Counter for button clicks
+volatile bool processClick = false; // Flag indicating whether to process button clicks
+bool changeScreenColor = false;     // Flag to change LCD screen color on button press
+
+// Callback function for SPI transfer completion
+// Sets the SPI_FLAG to signal that the SPI transfer has completed.
 void spi_cb(int event)
 {
     flags.set(SPI_FLAG); // Set the SPI_FLAG to signal that transfer is complete
 }
 
+// Template function to store data to flash memory
+// Writes a specified number of elements of type T to a flash memory region.
+// Ensures data size fits within the flash allocation, aligns it to block size, erases the flash sector, and writes the data.
 template <typename T>
 bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, size_t flash_size)
 {
@@ -99,6 +119,9 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     return true;
 }
 
+// Function to initialize the gyroscope
+// Configures the gyroscope by writing to control registers via SPI. 
+// Sets up parameters like output data rate, power mode, and scale settings.
 void initializeGyroscope(SPI &spi, uint8_t *write_buf, uint8_t *read_buf)
 {
     // Configure Control Register 1 (CTRL_REG1)
@@ -114,7 +137,8 @@ void initializeGyroscope(SPI &spi, uint8_t *write_buf, uint8_t *read_buf)
     flags.wait_all(SPI_FLAG);
 }
 
-// Function to read gyroscope data
+// Function to read gyroscope data from the SPI device
+// Reads raw angular velocity data for X, Y, and Z axes, converts it to rad/s, and returns a GyroData object.
 GyroData readGyroscopeData(SPI &spi, uint8_t *write_buf, uint8_t *read_buf)
 {
     uint16_t raw_gx, raw_gy, raw_gz;
@@ -149,7 +173,8 @@ GyroData readGyroscopeData(SPI &spi, uint8_t *write_buf, uint8_t *read_buf)
     /* printf("Angular Speed -> gx: %.5f rad/s, gy: %.5f rad/s, gz: %.5f rad/s\n", gx, gy, gz); */
 }
 
-// Function to trim gyro data (remove values below threshold)
+// Function to trim gyroscope data
+// Removes data points where all axis values are below a specified threshold (default 0.01f).
 std::vector<GyroData> trim_gyro_data(const std::vector<GyroData> &data, float threshold = 0.01f)
 {
     auto is_below_threshold = [threshold](const GyroData &d)
@@ -164,54 +189,8 @@ std::vector<GyroData> trim_gyro_data(const std::vector<GyroData> &data, float th
     return (first_valid < last_valid) ? std::vector<GyroData>(first_valid, last_valid) : std::vector<GyroData>();
 }
 
-// Function to store gyro data to flash memory
-/* void storeGyroDataToFlash(const std::vector<GyroData> &data)
-{
-    size_t data_size = data.size() * sizeof(GyroData);
-
-
-
-    for (const auto &gyro : data)
-    {
-        printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
-    }
-
-    // Ensure the data size fits within the flash block
-    if (data_size > FLASH_SIZE)
-    {
-        printf("Error: Data too large to store in flash memory.\n");
-        return;
-    }
-
-    flash.init();
-    flash.erase(FLASH_ADDRESS, FLASH_SIZE);               // Erase flash sector
-    flash.program(data.data(), FLASH_ADDRESS, data_size); // Write data to flash
-    flash.deinit();
-} */
-
-/* std::vector<GyroData> readGyroDataFromFlash()
-{
-    flash.init();
-
-    // Calculate the number of entries stored
-    size_t data_size = FLASH_SIZE / sizeof(GyroData);
-    std::vector<GyroData> data(data_size);
-
-    // Copy data from flash
-    memcpy(data.data(), reinterpret_cast<const void *>(FLASH_ADDRESS), FLASH_SIZE);
-
-    flash.deinit();
-
-    // Debug retrieved data
-    printf("Data retrieved from flash:\n");
-    for (const auto &gyro : data)
-    {
-        printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
-    }
-
-    return data;
-} */
-
+// Function to read gyroscope data from flash memory
+// Retrieves and deserializes gyroscope data previously stored in flash memory.
 std::vector<GyroData> readGyroDataFromFlash()
 {
     FlashIAP flash;
@@ -235,17 +214,8 @@ std::vector<GyroData> readGyroDataFromFlash()
     return data;
 }
 
-InterruptIn button(BUTTON1); // On-board button
-DigitalOut led1(LED1);       // On-board LED1
-DigitalOut led2(LED2);       // On-board LED2
-
-Timer debounceTimer;
-Timer doubleClickTimer;
-
-volatile int clickCount = 0;        // Click counter
-volatile bool processClick = false; // Flag to indicate processing of clicks
-bool changeScreenColor = false;
-
+// Interrupt Service Routine (ISR) for button press
+// Handles button presses, tracks click counts, and toggles screen color.
 void on_button_press()
 {
     debounceTimer.reset(); // Reset debounce timer
@@ -257,6 +227,8 @@ void on_button_press()
     changeScreenColor = true;
 }
 
+// Function to perform Dynamic Time Warping (DTW) between two sequences
+// Calculates a similarity measure between two sequences of floats.
 float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float> &seq2)
 {
     size_t n = seq1.size();
@@ -286,6 +258,8 @@ float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float
     return prev[m] / std::max(n, m);
 }
 
+// Function to compare gyroscope data using DTW
+// Compares two sets of gyroscope data using DTW and checks if the similarity meets a threshold.
 bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::vector<GyroData> &flashData, float dtw_threshold = 1.0f)
 {
     // Ensure the flash data has at least as many elements as gyroTemp
@@ -344,6 +318,8 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
     }
 }
 
+// Function to process and validate input data
+// Compares recorded gyroscope data with flash memory data using DTW and updates the system state.
 void processAndValidateInput()
 {
     printf("[.] Validating...\n");
@@ -372,6 +348,8 @@ void processAndValidateInput()
     ThisThread::sleep_for(1000ms);
 }
 
+// Function to process button clicks
+// Detects single and double clicks, records gyroscope data, validates it, or stores it in flash memory.
 void process_clicks()
 {
     led1 = 0;
@@ -460,6 +438,8 @@ void process_clicks()
     }
 }
 
+// Main program entry point
+// Initializes components, handles button interrupts, and processes gyroscope data based on user input.
 int main()
 {
     // Start the timers
@@ -507,3 +487,50 @@ int main()
         }
     }
 }
+
+// Function to store gyro data to flash memory
+/* void storeGyroDataToFlash(const std::vector<GyroData> &data)
+{
+    size_t data_size = data.size() * sizeof(GyroData);
+
+
+
+    for (const auto &gyro : data)
+    {
+        printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
+    }
+
+    // Ensure the data size fits within the flash block
+    if (data_size > FLASH_SIZE)
+    {
+        printf("Error: Data too large to store in flash memory.\n");
+        return;
+    }
+
+    flash.init();
+    flash.erase(FLASH_ADDRESS, FLASH_SIZE);               // Erase flash sector
+    flash.program(data.data(), FLASH_ADDRESS, data_size); // Write data to flash
+    flash.deinit();
+} */
+/* std::vector<GyroData> readGyroDataFromFlash()
+{
+    flash.init();
+
+    // Calculate the number of entries stored
+    size_t data_size = FLASH_SIZE / sizeof(GyroData);
+    std::vector<GyroData> data(data_size);
+
+    // Copy data from flash
+    memcpy(data.data(), reinterpret_cast<const void *>(FLASH_ADDRESS), FLASH_SIZE);
+
+    flash.deinit();
+
+    // Debug retrieved data
+    printf("Data retrieved from flash:\n");
+    for (const auto &gyro : data)
+    {
+        printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
+    }
+
+    return data;
+} */
