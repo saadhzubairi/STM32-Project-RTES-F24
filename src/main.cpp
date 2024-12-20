@@ -55,7 +55,7 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     // Check if data size fits in the allocated flash region
     if (data_size > flash_size)
     {
-        printf("Error: Data size exceeds allocated flash space.\n");
+        printf("[-] Error: Data size exceeds allocated flash space.\n");
         return false;
     }
 
@@ -70,7 +70,7 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     int result = flash.init();
     if (result != 0)
     {
-        printf("Error: Failed to initialize flash.\n");
+        printf("[-] Error: Failed to initialize flash.\n");
         return false;
     }
 
@@ -78,7 +78,7 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     result = flash.erase(flash_address, flash_size);
     if (result != 0)
     {
-        printf("Error: Failed to erase flash sector.\n");
+        printf("[-] Error: Failed to erase flash sector.\n");
         flash.deinit();
         return false;
     }
@@ -87,7 +87,7 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     result = flash.program(data, flash_address, data_size);
     if (result != 0)
     {
-        printf("Error: Failed to write to flash memory.\n");
+        printf("[-] Error: Failed to write to flash memory.\n");
         flash.deinit();
         return false;
     }
@@ -95,7 +95,7 @@ bool storeToFlash(const T *data, size_t num_elements, uint32_t flash_address, si
     // Deinitialize flash
     flash.deinit();
 
-    printf("Data successfully stored to flash.\n");
+    printf("[+] Data successfully stored to flash.\n");
     return true;
 }
 
@@ -264,7 +264,7 @@ float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float
 
     if (n > gyroTemp.size() || m > gyroTemp.size())
     {
-        printf("Error: Sequence size exceeds maximum DTW buffer size.\n");
+        printf("[-] Error: Sequence size exceeds maximum DTW buffer size.\n");
         return FLT_MAX; // Return a large value to indicate failure
     }
 
@@ -291,12 +291,12 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
     // Ensure the flash data has at least as many elements as gyroTemp
     if (flashData.size() < gyroTemp.size())
     {
-        printf("Error: Flash data has fewer elements than the gyroscope data.\n");
+        printf("[-] Error: Flash data has fewer elements than the gyroscope data.\n");
         return false;
     }
     else
     {
-        printf("\nComparing using DTW for gyroTemp size %d\n", gyroTemp.size());
+        printf("[.] Comparing using DTW for gyroTemp size %d\n", gyroTemp.size());
     }
 
     // Extract only the first gyroTemp.size() elements from flashData for comparison
@@ -346,7 +346,7 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
 
 void processAndValidateInput()
 {
-    printf("validating");
+    printf("[.] Validating...\n");
     UpdateInfo(lcd, "matching");
     led1 = 1;
     led2 = 1;
@@ -358,14 +358,14 @@ void processAndValidateInput()
     {
         led2 = 0; // Turn off LED2
         led1 = 1; // Turn on LED2 for 0.5 seconds
-        printf("correct!");
+        printf("[o] correct!");
         UpdateInfo(lcd, "correct, device unlocked!");
     }
     else
     {
         led1 = 0; // Turn off LED2
         led2 = 1; // Turn on LED2 for 0.5 seconds
-        printf("incorrect!");
+        printf("[x] incorrect!");
         UpdateInfo(lcd, "incorrect, device unlocked failed! Press button twice to record gesture. Or press once to match");
     }
     gyroTemp.clear();
@@ -381,7 +381,7 @@ void process_clicks()
         if (clickCount == 1)
         {
             // Single click detected
-            printf("Single click detected\n");
+            printf("[.] Single click detected\n");
             UpdateInfo(lcd, "recording");
 
             Timer recordingTimer;
@@ -405,7 +405,7 @@ void process_clicks()
         else if (clickCount == 2) // Record and store data to flash
         {
             // Double click detected
-            printf("Double click detected\n");
+            printf("[.] Double click detected\n");
             UpdateInfo(lcd, "recording");
 
             std::vector<GyroData> gyro_data_buffer;
@@ -428,23 +428,23 @@ void process_clicks()
             led2 = 0; // Turn off LED2
             UpdateInfo(lcd, "recorded, storing");
             // Print all collected gyroscope data
-            printf("Recorded gyro data:\n");
+            printf("[.] Recorded gyro data:\n");
             /* for (const auto &gyro : gyro_data_buffer)
             {
                 printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
             } */
 
             // Store data to flash
-            printf("Storing gyro data to flash memory...\n");
+            printf("[.] Storing gyro data to flash memory...\n");
             bool success = storeToFlash(gyro_data_buffer.data(), gyro_data_buffer.size(), FLASH_ADDRESS, FLASH_SIZE);
             if (success)
             {
-                printf("Gyro data stored successfully in flash.\n");
-                UpdateInfo(lcd, "stored successfully, press button once to match");
+                printf("[+] Gyro data stored successfully in flash.\n");
+                UpdateInfo(lcd, "Stored successfully, press button once to match");
             }
             else
             {
-                printf("Failed to store gyro data in flash.\n");
+                printf("[-] Failed to store gyro data in flash.\n");
             }
             // Turn on LED1 to indicate completion
             led1 = 1;
