@@ -286,7 +286,7 @@ float dynamicTimeWarping(const std::vector<float> &seq1, const std::vector<float
     return prev[m] / std::max(n, m);
 }
 
-bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::vector<GyroData> &flashData, float dtw_threshold = 0.5f)
+bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::vector<GyroData> &flashData, float dtw_threshold = 1.0f)
 {
     // Ensure the flash data has at least as many elements as gyroTemp
     if (flashData.size() < gyroTemp.size())
@@ -296,19 +296,20 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
     }
     else
     {
-        printf("Comparing using DTW\n");
+        printf("\nComparing using DTW for gyroTemp size %d\n", gyroTemp.size());
     }
 
     // Extract only the first gyroTemp.size() elements from flashData for comparison
     std::vector<GyroData> flashSubset(flashData.begin(), flashData.begin() + gyroTemp.size());
 
-    printf("Extracting data\n");
+    /* printf("Extracting data\n"); */
 
     // Extract axis-specific data
     std::vector<float> tempX, tempY, tempZ;
     std::vector<float> flashX, flashY, flashZ;
 
-    printf("PUTTING IN\n");
+    
+    printf("[.] Processing...\n");
 
     for (size_t i = 0; i < gyroTemp.size() - 1; ++i)
     {
@@ -319,8 +320,6 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
         flashX.push_back(flashSubset[i][0]);
         flashY.push_back(flashSubset[i][1]);
         flashZ.push_back(flashSubset[i][2]);
-
-        printf("DONE WITH I:%d\n", i);
     }
 
     // Compute DTW distance for each axis
@@ -328,20 +327,19 @@ bool compareGyroDataUsingDTW(const std::vector<GyroData> &gyroTemp, const std::v
     float dtwY = dynamicTimeWarping(tempY, flashY);
     float dtwZ = dynamicTimeWarping(tempZ, flashZ);
 
-    printf("DONE WITH dtw distance\n");
 
-    printf("DTW distances -> X: %.5f, Y: %.5f, Z: %.5f\n", dtwX, dtwY, dtwZ);
+    printf("[.] DTW distances -> X: %.5f, Y: %.5f, Z: %.5f\n", dtwX, dtwY, dtwZ);
 
     // Combine distances and check threshold
     float combined_dtw = (dtwX + dtwY + dtwZ) / 3.0f;
     if (combined_dtw <= dtw_threshold)
     {
-        printf("Gyro data matches flash data based on DTW.\n");
+        printf("[+] Gyro data matches flash data based on DTW. Average DTW distance = %.5f is within threshold = %.5f\n", combined_dtw, dtw_threshold);
         return true;
     }
     else
     {
-        printf("Mismatch: Combined DTW distance = %.5f exceeds threshold = %.5f\n", combined_dtw, dtw_threshold);
+        printf("[-] Mismatch: Average DTW distance = %.5f exceeds threshold = %.5f\n", combined_dtw, dtw_threshold);
         return false;
     }
 }
@@ -370,6 +368,7 @@ void processAndValidateInput()
         printf("incorrect!");
         UpdateInfo(lcd, "incorrect, device unlocked failed! Press button twice to record gesture. Or press once to match");
     }
+    gyroTemp.clear();
     ThisThread::sleep_for(1000ms);
 }
 
@@ -397,7 +396,7 @@ void process_clicks()
                 gyroTemp.push_back(gyro);
 
                 led1 = !led1;
-                ThisThread::sleep_for(50ms);
+                ThisThread::sleep_for(25ms);
             }
 
             processAndValidateInput();
@@ -423,17 +422,17 @@ void process_clicks()
 
                 // Optional: Blink LED2 while recording
                 led2 = !led2;
-                ThisThread::sleep_for(50ms);
+                ThisThread::sleep_for(25ms);
             }
 
             led2 = 0; // Turn off LED2
             UpdateInfo(lcd, "recorded, storing");
             // Print all collected gyroscope data
             printf("Recorded gyro data:\n");
-            for (const auto &gyro : gyro_data_buffer)
+            /* for (const auto &gyro : gyro_data_buffer)
             {
                 printf("gx: %.5f, gy: %.5f, gz: %.5f\n", gyro[0], gyro[1], gyro[2]);
-            }
+            } */
 
             // Store data to flash
             printf("Storing gyro data to flash memory...\n");
